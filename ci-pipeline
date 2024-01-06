@@ -1,0 +1,69 @@
+pipeline {
+    environment{
+        dockerImage = ""
+    }
+
+    agent any
+
+    stages {
+        stage('git pull') {
+            steps {
+                dir('sample-api-app'){
+                    git branch: 'main', credentialsId: 'new-git-creds', url: 'https://github.com/vyashemang/sample-argocd-api'
+                }
+                dir('sample-deployment'){
+                    git branch: 'main', credentialsId: 'new-git-creds', url: 'https://github.com/vyashemang/sample-argocd-deployment'
+                }
+            }
+        }
+
+        stage('build') {
+            steps {
+                dir('sample-api-app'){
+                    script{
+                        sh 'mvn clean install'
+                    }
+                }
+            }
+        }
+
+        // Build image
+        stage('build docker image') {
+            steps {
+                dir('sample-api-app'){
+                    script{
+                        dockerImage = docker.build "vyashemang/sample-argocd-api:${env.BUILD_NUMBER}"
+                    }
+                }
+            }
+        }
+
+        // Push image to dockerhub
+        stage('push docker image') {
+            steps {
+                script{
+                    docker.withRegistry('', 'docker-credentials'){
+                        dockerImage.push()
+                    }
+                }
+            }
+        }
+
+        // Update manifest files
+        stage('update manifest file') {
+            steps {
+                dir('sample-deployment'){
+                    withCredentials([usernamePassword(credentialsId: 'new-git-creds', passwordVariable: 'GIT_PASSWORD', usernameVariable: 'GIT_USERNAME')]) {
+                        sh "git config --global user.email YOUR_EMAIL"
+                        sh "git config --global user.name YOUR_USERNAME"
+                        // sh "git remote add origin https://$GIT_USERNAME:$GIT_PASSWORD@github.com/vyashemang/sample-argocd-deployment.git"
+                        sh "sed -i 's+vyashemang/sample-argocd-api.*+vyashemang/sample-argocd-api:${env.BUILD_NUMBER}+g' deployment.yaml"
+                        sh "git add ."
+                        sh "git commit -m 'build no: ${env.BUILD_NUMBER}'"
+                        sh "git push https://$GIT_USERNAME:$GIT_PASSWORD@github.com/vyashemang/sample-argocd-deployment.git main"
+                    }
+                }
+            }
+        }
+    }
+}
